@@ -36,12 +36,12 @@ class Target:
         self.param_types = tuple(param_types) if param_types else ()
         self.submit_options = tuple(submit_options) if submit_options else ()
 
-def __repr__(self):
-    return (
-        f"Target(method={self.method!r}, url={self.url!r}, "
-        f"injectable_params={self.injectable_params!r}, fixed_params={self.fixed_params!r}, "
-        f"source_url={self.source_url!r})"
-    )
+    def __repr__(self):
+        return (
+            f"Target(method={self.method!r}, url={self.url!r}, "
+            f"injectable_params={self.injectable_params!r}, fixed_params={self.fixed_params!r}, "
+            f"source_url={self.source_url!r})"
+        )
 
 
 def _looks_like_csrf(name: str):
@@ -50,7 +50,7 @@ def _looks_like_csrf(name: str):
 
 
 #    Если URL содержит query-параметры (?a=b&c=d), возвращаем Target для GET.
-def extract_query_target(url: str, source_url: str) -> Target:
+def extract_query_target(url: str, source_url: str) -> Target | None:
     parsed = urlparse(url)
     if not parsed.query:
         return None
@@ -110,7 +110,7 @@ def _option_value(option):
         val = option.get_text(strip=True)
     return val or ""
 
-def extract_forms(page_url: str, html: str, include_submit: bool = False):
+def extract_forms(page_url: str, html: str, include_submit: bool = True):
     soup = BeautifulSoup(html, "html.parser")
     targets = []
 
@@ -197,16 +197,37 @@ def extract_forms(page_url: str, html: str, include_submit: bool = False):
                 if button_type in ("submit", "button"):
                     submit_candidates.append((name, control.get("value") or ""))
 
-            #if include_submit and submit_candidates:
-                #fixed.append(submit_candidates[0])
-
-        targets.append(
-            Target(
-                url = action_url,
-                method = method,
-                injectable_params = tuple(sorted(injectable))
-            )
+        base_kwargs = dict(
+            url=action_url,
+            method=method,
+            injectable_params=tuple(sorted(injectable)),
+            source_url=page_url,
+            form_html=str(form),
+            kind="form",
+            enctype=enctype,
+            csrf_param_names=tuple(sorted(csrf_names)),
+            param_types=tuple(sorted(param_types.items())),
+            submit_options=tuple(sorted(submit_candidates)),
         )
+
+        if include_submit and submit_candidates:
+            for submit_name, submit_value in submit_candidates:
+                fixed_with_submit = list(fixed)
+                fixed_with_submit.append((submit_name, submit_value))
+                targets.append(
+                    Target(
+                        fixed_params=tuple(fixed_with_submit),
+                        **base_kwargs,
+                    )
+                )
+        else:
+            targets.append(
+                Target(
+                    fixed_params=tuple(fixed),
+                    **base_kwargs,
+                )
+            )
+    return targets
 
 #исключаем из < href> переход на ненужные ссылки
 def is_good_link(href: str):
@@ -231,7 +252,7 @@ def extract_page_targets(page_url: str, html: str, include_submit: bool = False)
     return targets
 
 
-def crawl_links(base_url: str, max_pages: int = 20):
+def crawl_targets(base_url: str, max_pages: int = 20, include_submit=True) -> list[Target]:
     """
       Обходит сайт начиная с base_url и собирает ссылки в пределах того же хоста.
       Возвращает список посещённых URL.
@@ -239,7 +260,7 @@ def crawl_links(base_url: str, max_pages: int = 20):
     session = requests.Session()
     queue = deque([base_url]) #очередь ссылок на обход
     visited = set()#посещенные адреса
-    all_targets = list[Target] = [] #см параметры класса
+    all_targets: list[Target] = [] #см параметры класса
     seen_target_keys: set[tuple] = set()
     base_host = urlparse(base_url).netloc #возвращает из https://example.com/path → example.com
 
@@ -249,33 +270,36 @@ def crawl_links(base_url: str, max_pages: int = 20):
             continue
         visited.add(url)
 
-
         try:
-            resp = session.get(url, timeout=10)
+            response = session.get(url, timeout=10)
         except requests.RequestException:
             continue
 
         # проверка на html
-        content_type = resp.headers.get("Content-Type", "").lower()
+        content_type = response.headers.get("Content-Type", "").lower()
         if "text/html" not in content_type:
             continue
 
+        html = response.text
+        page_targets = extract_page_targets(url, html, include_submit)
+        for target in page_targets:
+            key = (
+                target.method,
+                target.url,
+                target.injectable_params,
+                target.fixed_params,
+                target.submit_options,
+                target.csrf_param_names,
+                target.enctype,
+                target.kind,
+            )
+            if key not in seen_target_keys:
+                seen_target_keys.add(key)
+                all_targets.append(target)
+
+
         #работа с html с помощью beautifulsoup
-        html = resp.text
-
-        #передает параметры
-        page_targets = extract_page_targets(url, html, include_submit=include_submit)
-
-
-
-
-
-
-
-
-
-
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(response.text, "html.parser")
 
         for a in soup.find_all("a"):
             href = a.get("href")
@@ -289,10 +313,6 @@ def crawl_links(base_url: str, max_pages: int = 20):
             abs_url, _frag = urldefrag(abs_url)
             if urlparse(abs_url).netloc != base_host:
                 continue
-            if abs_url in visited:
-                continue
-
-            queue.append(abs_url)
-
-
-    return list(visited)
+            if abs_url not in visited:
+                queue.append(abs_url)
+    return all_targets, list(visited)

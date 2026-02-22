@@ -211,42 +211,6 @@ def is_good_link(href: str | None) -> bool:
     return True
 
 
-def crawl_links(base_url: str, max_pages: int = 20) -> list[str]:
-    session = requests.Session()
-    queue = deque([base_url])
-    visited: set[str] = set()
-    base_host = urlparse(base_url).netloc
-
-    while queue and len(visited) < max_pages:
-        url = queue.popleft()
-        if url in visited:
-            continue
-        visited.add(url)
-
-        try:
-            response = session.get(url, timeout=10)
-        except requests.RequestException:
-            continue
-
-        content_type = response.headers.get("Content-Type", "").lower()
-        if "text/html" not in content_type:
-            continue
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        for anchor in soup.find_all("a"):
-            href = anchor.get("href")
-            if not is_good_link(href):
-                continue
-
-            abs_url, _ = urldefrag(urljoin(url, href))
-            if urlparse(abs_url).netloc != base_host:
-                continue
-            if abs_url not in visited:
-                queue.append(abs_url)
-
-    return list(visited)
-
-
 def crawl_targets(base_url: str, max_pages: int = 20, include_submit: bool = False) -> tuple[list[str], list[Target]]:
     session = requests.Session()
     queue = deque([base_url])
