@@ -6,6 +6,11 @@ from bs4.element import Tag
 
 CSRF_KEYWORDS = ("csrf", "xsrf", "_token", "authenticity_token", "csrfmiddlewaretoken", "__requestverificationtoken")
 
+# Manual run settings (edit these constants before запуск как скрипт).
+BASE_URL = "https://studfile.net/"
+MAX_PAGES = 20
+INCLUDE_SUBMIT = True
+
 class Target:
     def __init__(
         self,
@@ -243,7 +248,7 @@ def is_good_link(href: str):
         return False
     return True
 
-def extract_page_targets(page_url: str, html: str, include_submit: bool = False) -> list[Target]:
+def extract_page_targets(page_url: str, html: str, include_submit: bool = True) -> list[Target]:
     targets = extract_forms(page_url=page_url, html=html, include_submit=include_submit)
 
     query_target = extract_query_target(page_url, source_url=page_url)
@@ -252,7 +257,7 @@ def extract_page_targets(page_url: str, html: str, include_submit: bool = False)
     return targets
 
 
-def crawl_targets(base_url: str, max_pages: int = 20, include_submit=True) -> list[Target]:
+def _crawl_targets_internal(base_url: str, max_pages: int = 20, include_submit: bool = True) -> tuple[list[str], list[Target]]:
     """
       Обходит сайт начиная с base_url и собирает ссылки в пределах того же хоста.
       Возвращает список посещённых URL.
@@ -315,4 +320,48 @@ def crawl_targets(base_url: str, max_pages: int = 20, include_submit=True) -> li
                 continue
             if abs_url not in visited:
                 queue.append(abs_url)
-    return all_targets, list(visited)
+    return sorted(visited), all_targets
+
+
+def crawl_targets(base_url: str, max_pages: int = 20, include_submit: bool = True) -> list[Target]:
+    _visited, all_targets = _crawl_targets_internal(
+        base_url=base_url,
+        max_pages=max_pages,
+        include_submit=include_submit,
+    )
+    return all_targets
+
+
+def crawl_targets_with_visited(
+    base_url: str,
+    max_pages: int = 20,
+    include_submit: bool = True,
+) -> tuple[list[str], list[Target]]:
+    return _crawl_targets_internal(
+        base_url=base_url,
+        max_pages=max_pages,
+        include_submit=include_submit,
+    )
+
+
+if __name__ == "__main__":
+    visited_urls, targets = crawl_targets_with_visited(
+        base_url=BASE_URL,
+        max_pages=MAX_PAGES,
+        include_submit=INCLUDE_SUBMIT,
+    )
+
+    print(f"BASE_URL={BASE_URL} MAX_PAGES={MAX_PAGES} INCLUDE_SUBMIT={INCLUDE_SUBMIT}")
+    print(f"Visited URLs: {len(visited_urls)}")
+    for url in visited_urls:
+        print(f"  - {url}")
+
+
+    filtered_targets = targets
+    filtered_targets = [target for target in filtered_targets if target.injectable_params]
+    print(f"Targets: {len(filtered_targets)}")
+    for target in filtered_targets:
+        print(
+            f"  - method={target.method} kind={target.kind} url={target.url} "
+            f"injectable={target.injectable_params} fixed={target.fixed_params} source={target.source_url}"
+        )
