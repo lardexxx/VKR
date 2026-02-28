@@ -73,7 +73,31 @@ def build_request_pairs(
 
 def build_request_kwargs(target, pairs) -> dict:
     method = target.method
+    #ветка развития 1
     if method == "GET":
         return {"params": pairs}
 
-    enctype = (targer.enctype or "application/x-www-form-urlencoded")
+    enctype = (target.enctype or "application/x-www-form-urlencoded").lower()
+    if enctype.startswith("multipart/form-data"):
+        #ветка 2
+        return {"files": [(name, (None, value)) for name, value in pairs]} # files=[("a",(None,"1")), ("b",(None,"2"))]
+    #ветка 3
+    return {"data": pairs}
+
+
+def _send_once(
+        target: Target,
+        session: requests.Session,
+        request_kwargs: dict,
+        config: RequestConfig,
+)-> requests.Response:
+    return session.request(
+        method=target.method.upper(),
+        url=target.url,
+        timeout=config.timeout,
+        allow_redirects=config.allow_redirects,
+        verify=config.verify_ssl,
+        **request_kwargs,
+    )
+    
+
